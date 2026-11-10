@@ -33,9 +33,26 @@ matrix:
     - jdk: openjdk-ea
       env: JACOCO_SKIP=true
 
+# Travis' focal apt repo no longer carries bellsoft-java14, so the openjdk14 leg is
+# left without a JDK; provision AdoptOpenJDK 14.0.2 directly for that leg only.
+before_install:
+  - |
+    if [ "$TRAVIS_JDK_VERSION" = "openjdk14" ] && [ ! -x "$JAVA_HOME/bin/java" ]; then
+      curl -fsSL -o /tmp/jdk14.tar.gz https://github.com/AdoptOpenJDK/openjdk14-binaries/releases/download/jdk-14.0.2%2B12/OpenJDK14U-jdk_x64_linux_hotspot_14.0.2_12.tar.gz
+      mkdir -p "$HOME/jdk14" && tar -xzf /tmp/jdk14.tar.gz -C "$HOME/jdk14" --strip-components=1
+      export JAVA_HOME="$HOME/jdk14"
+      export PATH="$JAVA_HOME/bin:$PATH"
+    fi
+  - java -version
+
 # --no-transfer-progress requires Maven 3.6.1+. Otherwise use --batch-mode
 script:
   - mvn -V --no-transfer-progress
-
-after_success:
-  - mvn -V --no-transfer-progress clean cobertura:cobertura coveralls:report -Ptravis-cobertura
+  # Name every skipped test and its reason (Surefire's summary prints only a count);
+  # for an assumption skip, also print the assume* source line that triggered it.
+  - |
+    awk '
+      /<testcase /{ cls=$0; sub(/.*classname="/,"",cls); sub(/".*/,"",cls); nm=$0; sub(/.* name="/,"",nm); sub(/".*/,"",nm); want=0 }
+      /<skipped/{ print "SKIPPED: " cls "." nm " -- " $0; want=1 }
+      want && index($0, "at " cls "." nm "(") { n=$0; sub(/.*\.java:/,"",n); sub(/\).*/,"",n); src="src/test/java/" cls; gsub(/\./,"/",src); src=src ".java"; i=0; while ((getline l < src) > 0) { if (++i == n) { gsub(/\r/,"",l); gsub(/^[ \t]+/,"",l); print "  skip condition at " src ":" n ": " l; break } } close(src); want=0 }
+    ' target/surefire-reports/TEST-*.xml
